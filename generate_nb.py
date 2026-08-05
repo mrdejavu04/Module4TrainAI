@@ -1,0 +1,284 @@
+import json
+
+cells = [
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "# 🧹 BÀI TOÁN DỰ ĐOÁN DOANH SỐ GAME 3 NĂM TỚI - BƯỚC 1: LÀM SẠCH & TIỀN XỬ LÝ DỮ LIỆU (`vgsales.csv`)\n",
+            "\n",
+            "## 📌 Mục Tiêu Notebook:\n",
+            "1. **Kiểm tra & Xử lý dữ liệu khuyết thiếu (Missing Values)** ở cột `Year` và `Publisher`.\n",
+            "2. **Lọc dữ liệu rác/bị hụt (Outliers & Truncated Data)**: Loại bỏ các năm sau 2016 do dữ liệu cào thiếu hụt.\n",
+            "3. **Phân tích Khám phá Dữ liệu (EDA)**:\n",
+            "   - Đánh giá xu hướng các **Thể loại game (Genre)** tiềm năng.\n",
+            "   - Thống kê **Top 10 tựa game** và nhà phát hành có doanh số ấn tượng.\n",
+            "   - Phân tích tương quan giữa các thị trường: Bắc Mỹ (NA), Châu Âu (EU), Nhật Bản (JP), Khác (Other).\n",
+            "4. **Tạo Feature Chuỗi Thời Gian (Time-Series Features)** & Xuất file dữ liệu sạch `vgsales_cleaned.csv` phục vụ cho mô hình **Machine Learning (XGBoost)** và **Deep Learning (LSTM)**.\n"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 1. Import Thư Viện & Tải Dữ Liệu"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "import pandas as pd\n",
+            "import numpy as np\n",
+            "import matplotlib.pyplot as plt\n",
+            "import seaborn as sns\n",
+            "import re\n",
+            "\n",
+            "# Cấu hình hiển thị đồ họa\n",
+            "sns.set_theme(style=\"whitegrid\")\n",
+            "plt.rcParams['figure.figsize'] = (12, 6)\n",
+            "plt.rcParams['font.size'] = 11\n",
+            "\n",
+            "# Tải dữ liệu vgsales.csv\n",
+            "df_raw = pd.read_csv('vgsales.csv')\n",
+            "print(f\"Thành công tải dữ liệu! Kích thước ban đầu: {df_raw.shape[0]} dòng, {df_raw.shape[1]} cột.\")\n",
+            "df_raw.head()"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 2. Kiểm Tra Tổng Quan Dữ Liệu (Data Inspection)"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "print(\"=== Thông tin kiểu dữ liệu và giá trị thiếu ===\")\n",
+            "df_raw.info()\n",
+            "\n",
+            "print(\"\\n=== Số lượng giá trị Null từng cột ===\")\n",
+            "null_counts = df_raw.isnull().sum()\n",
+            "print(null_counts[null_counts > 0])"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 3. Tiền Xử Lý Dữ Liệu & Xử Lý Giá Trị Thiếu (Data Cleaning)\n",
+            "- Cột `Year`: Có 271 dòng thiếu. Ta thử trích xuất số năm từ tên tựa game (ví dụ: 'FIFA 07' -> 2006/2007). Các trường hợp còn lại loại bỏ để bảo vệ tính chính xác của Time-Series.\n",
+            "- Cột `Publisher`: Điền 'Unknown' cho 58 dòng bị khuyết thiếu."
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "df = df_raw.copy()\n",
+            "\n",
+            "# Function trích xuất năm từ tên tựa game nếu Year bị NaN\n",
+            "def extract_year_from_name(row):\n",
+            "    if pd.isna(row['Year']):\n",
+            "        match = re.search(r'\\b(19\\d{2}|20\\d{2})\\b', str(row['Name']))\n",
+            "        if match:\n",
+            "            return float(match.group(1))\n",
+            "        match_short = re.search(r'\\b(\\d{2})\\b', str(row['Name']))\n",
+            "        if match_short:\n",
+            "            yr = int(match_short.group(1))\n",
+            "            if 80 <= yr <= 99:\n",
+            "                return float(1900 + yr)\n",
+            "            elif 0 <= yr <= 20:\n",
+            "                return float(2000 + yr)\n",
+            "    return row['Year']\n",
+            "\n",
+            "df['Year'] = df.apply(extract_year_from_name, axis=1)\n",
+            "\n",
+            "# Loại bỏ các dòng vẫn bị NaN ở Year\n",
+            "initial_rows = len(df)\n",
+            "df = df.dropna(subset=['Year']).copy()\n",
+            "df['Year'] = df['Year'].astype(int)\n",
+            "\n",
+            "# Điền Publisher bị thiếu bằng 'Unknown'\n",
+            "df['Publisher'] = df['Publisher'].fillna('Unknown')\n",
+            "\n",
+            "print(f\"Đã xử lý xong Null! Số dòng sau khi lọc Year: {len(df)} (Loại bỏ {initial_rows - len(df)} dòng).\")"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 4. Lọc Dữ Liệu Thời Gian Tin Cậy (1980 - 2016)\n",
+            "- Dữ liệu từ 2017 - 2020 trong bộ `vgsales.csv` bị sụt giảm bất thường do ngưng thu thập. Ta sẽ lọc giai đoạn **1980 - 2016** để mô hình Time-Series không bị nhiễu."
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "print(\"Doanh số tổng theo năm trước khi lọc:\")\n",
+            "print(df.groupby('Year')['Global_Sales'].sum().tail(8))\n",
+            "\n",
+            "# Lọc năm <= 2016\n",
+            "df_clean = df[(df['Year'] >= 1980) & (df['Year'] <= 2016)].copy()\n",
+            "print(f\"\\nKích thước tập dữ liệu sạch (1980-2016): {len(df_clean)} dòng.\")"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 5. Phân Tích Khám Phá Dữ Liệu (EDA) & Đánh Giá Tiềm Năng Thể Loại / Top Game"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# 1. Xu hướng doanh số tổng theo năm\n",
+            "yearly_sales = df_clean.groupby('Year')['Global_Sales'].sum().reset_index()\n",
+            "\n",
+            "plt.figure(figsize=(14, 5))\n",
+            "sns.lineplot(data=yearly_sales, x='Year', y='Global_Sales', marker='o', color='#2b5c8f', linewidth=2.5)\n",
+            "plt.title('Xu Hướng Tổng Doanh Số Game Toàn Cầu (1980 - 2016)', fontsize=14, fontweight='bold')\n",
+            "plt.xlabel('Năm', fontsize=12)\n",
+            "plt.ylabel('Tổng Doanh Số (Triệu bản/USD)', fontsize=12)\n",
+            "plt.grid(True, linestyle='--', alpha=0.6)\n",
+            "plt.show()"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# 2. Thống kê Thể loại Game (Genre) có tổng doanh số cao nhất\n",
+            "genre_sales = df_clean.groupby('Genre')['Global_Sales'].agg(['sum', 'mean', 'count']).reset_index()\n",
+            "genre_sales = genre_sales.sort_values(by='sum', ascending=False)\n",
+            "\n",
+            "plt.figure(figsize=(12, 5))\n",
+            "ax = sns.barplot(data=genre_sales, x='sum', y='Genre', palette='Blues_r')\n",
+            "plt.title('Tổng Doanh Số Theo Thể Loại Game (1980 - 2016)', fontsize=14, fontweight='bold')\n",
+            "plt.xlabel('Tổng Doanh Số toàn cầu (Triệu bản)', fontsize=12)\n",
+            "plt.ylabel('Thể Loại (Genre)', fontsize=12)\n",
+            "\n",
+            "for p in ax.patches:\n",
+            "    width = p.get_width()\n",
+            "    ax.annotate(f'{width:.1f}M', (width + 10, p.get_y() + p.get_height() / 2.),\n",
+            "                ha='left', va='center', fontsize=10)\n",
+            "\n",
+            "plt.xlim(0, genre_sales['sum'].max() * 1.15)\n",
+            "plt.show()"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# 3. Top 10 Tựa Game Có Doanh Số Cao Nhất Lịch Sử\n",
+            "top10_games = df_clean.sort_values(by='Global_Sales', ascending=False).head(10)\n",
+            "\n",
+            "plt.figure(figsize=(12, 6))\n",
+            "ax = sns.barplot(data=top10_games, x='Global_Sales', y='Name', hue='Genre', dodge=False, palette='viridis')\n",
+            "plt.title('Top 10 Tựa Game Có Doanh Số Cao Nhất (1980 - 2016)', fontsize=14, fontweight='bold')\n",
+            "plt.xlabel('Doanh Số Toàn Cầu (Triệu bản)', fontsize=12)\n",
+            "plt.ylabel('Tên Game', fontsize=12)\n",
+            "plt.legend(title='Thể loại', loc='lower right')\n",
+            "plt.show()\n",
+            "\n",
+            "display(top10_games[['Rank', 'Name', 'Platform', 'Year', 'Genre', 'Publisher', 'Global_Sales']])"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# 4. Phân Tích Thể Loại Tiềm Năng Trong Giai Đoạn 2012 - 2016 (Làm cơ sở dự đoán 3 năm tới)\n",
+            "recent_df = df_clean[df_clean['Year'] >= 2012]\n",
+            "recent_genre = recent_df.groupby('Genre')['Global_Sales'].sum().sort_values(ascending=False).reset_index()\n",
+            "\n",
+            "plt.figure(figsize=(12, 5))\n",
+            "sns.barplot(data=recent_genre, x='Global_Sales', y='Genre', palette='magma')\n",
+            "plt.title('Thể Loại Game Có Doanh Thu Cao Nhất Giai Đoạn 2012 - 2016', fontsize=13, fontweight='bold')\n",
+            "plt.xlabel('Tổng Doanh Số (Triệu bản)', fontsize=12)\n",
+            "plt.ylabel('Thể Loại', fontsize=12)\n",
+            "plt.show()"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# 5. Tỷ Trọng Thị Trường (NA vs EU vs JP vs Other)\n",
+            "region_totals = [\n",
+            "    df_clean['NA_Sales'].sum(),\n",
+            "    df_clean['EU_Sales'].sum(),\n",
+            "    df_clean['JP_Sales'].sum(),\n",
+            "    df_clean['Other_Sales'].sum()\n",
+            "]\n",
+            "region_labels = ['Bắc Mỹ (NA)', 'Châu Âu (EU)', 'Nhật Bản (JP)', 'Khác (Other)']\n",
+            "colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B0']\n",
+            "\n",
+            "plt.figure(figsize=(8, 8))\n",
+            "plt.pie(region_totals, labels=region_labels, autopct='%1.1f%%', startangle=140, colors=colors, explode=(0.05, 0, 0, 0))\n",
+            "plt.title('Tỷ Trọng Doanh Số Theo Thị Trường Khu Vực', fontsize=14, fontweight='bold')\n",
+            "plt.show()"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 6. Xuất File Dữ Liệu Đã Làm Sạch (`vgsales_cleaned.csv`)\n",
+            "- Tập dữ liệu này đã được loại bỏ giá trị khuyết thiếu và dữ liệu nhiễu, sẵn sàng làm Input cho bước **Dự đoán doanh số 3 năm tiếp theo** với ML & DL."
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "output_path = 'vgsales_cleaned.csv'\n",
+            "df_clean.to_csv(output_path, index=False, encoding='utf-8')\n",
+            "print(f\"🎉 Đã xuất thành công file dữ liệu sạch: '{output_path}'!\")\n",
+            "print(f\"Số bản ghi ghi nhận: {len(df_clean)} dòng.\")"
+        ]
+    }
+]
+
+notebook = {
+    "cells": cells,
+    "metadata": {
+        "language_info": {
+            "name": "python"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 2
+}
+
+with open(r'c:\Users\Kien\Desktop\Module4TrainingAI\Data_Cleaning_vgsales.ipynb', 'w', encoding='utf-8') as f:
+    json.dump(notebook, f, ensure_ascii=False, indent=2)
+
+print("Jupyter Notebook 'Data_Cleaning_vgsales.ipynb' created successfully!")
